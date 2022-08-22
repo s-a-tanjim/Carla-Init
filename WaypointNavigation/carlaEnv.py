@@ -8,6 +8,9 @@ from agents.navigation.global_route_planner import GlobalRoutePlanner
 
 
 class CarlaEnv:
+
+  WAYPOINT_COLOR = carla.Color(r=3, g=211, b=252, a=255)
+
   def __init__(self, debug = True):
     # Connect to the client and get the world object
     self.client = carla.Client('localhost', 2000)
@@ -39,13 +42,25 @@ class CarlaEnv:
     self.vehicle_blueprint = None
     self.vehicle = None
     self.debug = debug
+    self.traffic_vehicles = []
     
+
   # def get_topology_waypoint(self):
   #   path = random.choice(self.map.get_topology())
   #   start_point = carla.Location(path[0].transform.location)
   #   end_point = carla.Location(path[1].transform.location)
   #   return (start_point, end_point)
+
+  def generate_random_traffic(self):
+    # Add traffic to the simulation
+    for i in range(30): 
+      vehicle_bp = random.choice(self.blueprint_lib.filter('vehicle')) 
+      npc = self.world.try_spawn_actor(vehicle_bp, random.choice(self.spawn_points))
+      if(npc):
+        npc.set_autopilot(True)
+        self.traffic_vehicles.append(npc)
   
+
   def get_two_spawn_points(self, random_choose = True):
     if random_choose:
       while True:
@@ -57,6 +72,7 @@ class CarlaEnv:
       start_point = self.spawn_points[0]
       end_point = self.spawn_points[len(self.spawn_points)-1]
     return (start_point, end_point)
+
 
   def spawn_vehicle(self, spawn_point = None):
     # Get the blueprint for the vehicle you want
@@ -71,6 +87,13 @@ class CarlaEnv:
     spectator = self.world.get_spectator() 
     transform = carla.Transform(self.vehicle.get_transform().transform(carla.Location(x=-4,z=2.5)),self.vehicle.get_transform().rotation) 
     spectator.set_transform(transform) 
+
+    # Spawn an RGB cammera with an offset from the vehicle center
+    camera_bp = self.blueprint_lib.find('sensor.camera.rgb') 
+    camera_init_trans = carla.Transform(carla.Location(x=2.5, z=0.7)) #Change this to move camera
+    camera_bp.set_attribute("fov","110")
+    camera = self.world.spawn_actor(camera_bp, camera_init_trans, attach_to=self.vehicle)
+    camera.listen(lambda image: self.rgb_camera_callback(image))
 
     # self.vehicle.set_autopilot(True)
 
@@ -99,9 +122,12 @@ class CarlaEnv:
       self.vehicle.set_transform(next_waypoint.transform)
       time.sleep(0.5)
   
+
   def traverse_between_points(self, start_point, end_point):
     if self.vehicle==None:
       self.spawn_vehicle(start_point)
+    
+    self.generate_random_traffic()
 
     #  start_point = carla.Location(self.spawn_points[0].location)
     # end_point = carla.Location(self.spawn_points[len(self.spawn_points)-1].location)
@@ -113,14 +139,14 @@ class CarlaEnv:
     w1 = grp.trace_route(start_point, end_point) 
     
     if(self.debug):
-      self.world.debug.draw_point(start_point,color=carla.Color(r=255, g=0, b=0),size=1.2 ,life_time=120.0)
-      self.world.debug.draw_point(end_point,color=carla.Color(r=255, g=0, b=0),size=1.2 ,life_time=120.0)
+      self.world.debug.draw_point(start_point ,color=self.WAYPOINT_COLOR ,size=0.6 ,life_time=120.0)
+      self.world.debug.draw_point(end_point ,color=self.WAYPOINT_COLOR ,size=0.6 ,life_time=120.0)
 
     wps=[]
     for i in range(len(w1)):
       wps.append(w1[i][0])
       if(self.debug):
-        self.world.debug.draw_point(w1[i][0].transform.location,color=carla.Color(r=255, g=0, b=0),size=0.4 ,life_time=120.0)
+        self.world.debug.draw_point(w1[i][0].transform.location ,color=self.WAYPOINT_COLOR ,size=0.2 ,life_time=120.0)
 
     PID = self.setup_PID()
 
@@ -184,7 +210,9 @@ class CarlaEnv:
   def destroy_actor(self):
     if self.vehicle:
       self.vehicle.destroy()
-    
+
+    self.client.apply_batch([carla.command.DestroyActor(x) for x in self.traffic_vehicles])
+
 
   def __del__(self):
     self.destroy_actor()
