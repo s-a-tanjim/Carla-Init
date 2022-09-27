@@ -2,6 +2,8 @@ import carla
 import random
 import time
 import math
+import matplotlib.pyplot as plt
+import numpy as np
 
 from agents.navigation.controller import VehiclePIDController
 from agents.navigation.global_route_planner import GlobalRoutePlanner
@@ -10,8 +12,9 @@ from agents.navigation.global_route_planner import GlobalRoutePlanner
 class CarlaEnv:
 
   WAYPOINT_COLOR = carla.Color(r=3, g=211, b=252, a=255)
+  PLOT_PID_GRAPH = True
 
-  def __init__(self, debug = True):
+  def __init__(self, debug = False):
     # Connect to the client and get the world object
     self.client = carla.Client('localhost', 2000)
     self.client.set_timeout(10)
@@ -43,6 +46,13 @@ class CarlaEnv:
     self.vehicle = None
     self.debug = debug
     self.traffic_vehicles = []
+    self.sensors_actor = []
+
+    self.target_speed_plot = []
+    self.current_speed_plot = []
+    self.target_plot = []
+    self.throttle_plot = []
+    self.steer_plot = []
     
 
   # def get_topology_waypoint(self):
@@ -93,10 +103,14 @@ class CarlaEnv:
     camera_init_trans = carla.Transform(carla.Location(x=2.5, z=0.7)) #Change this to move camera
     camera_bp.set_attribute("fov","110")
     camera = self.world.spawn_actor(camera_bp, camera_init_trans, attach_to=self.vehicle)
+    self.sensors_actor.append(camera)
     camera.listen(lambda image: self.rgb_camera_callback(image))
 
     # self.vehicle.set_autopilot(True)
 
+
+  def rgb_camera_callback(self, img):
+    pass
 
   def traverse_from_topology(self, start_waypoint, end_waypoint):
     # self.spawn_vehicle(start_waypoint.transform)
@@ -150,7 +164,7 @@ class CarlaEnv:
 
     PID = self.setup_PID()
 
-    speed = 30
+    speed = 40
     self.drive_through_plan(wps, speed, PID)
 
 
@@ -158,27 +172,61 @@ class CarlaEnv:
     """
       This function drives throught the planned_route with the speed passed in the argument
     """
-    i=0
-    target=planned_route[0]
-    while True:
-      vehicle_loc= self.vehicle.get_location()
-      distance_v = self.find_dist_veh(vehicle_loc,target)
-      control = PID.run_step(speed,target)
-      self.vehicle.apply_control(control)
+    try:
+      i=0
+      target=planned_route[0]
+      # print("target:")
+      # print(type(target))
+      # print(target)
+      if self.PLOT_PID_GRAPH:
+        plt.ion()
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        plotter, = plt.plot(self.current_speed_plot, color='g')
+        plotter1, = plt.plot(self.target_speed_plot, color='r')
+        # giving a title to my graph
+        plt.title('Current Speed (KMh)!')
       
-      if i==(len(planned_route)-1):
-        print("last waypoint reached")
-        break 
-      
-      if (distance_v<3.5):
-        control = PID.run_step(speed,target)
+      iteration = 0
+      while True:
+        vehicle_loc= self.vehicle.get_location()
+        distance_v = self.find_dist_veh(vehicle_loc,target)
+        control = PID.run_step(speed, target)
+        # print(type(control))
+        # print(control)
+        # print("-------------------")
         self.vehicle.apply_control(control)
-        i=i+1
-        target=planned_route[i]
         
-    control = PID.run_step(0,planned_route[len(planned_route)-1])
-    self.vehicle.apply_control(control)
+        if i==(len(planned_route)-1):
+          print("last waypoint reached")
+          break 
+        
+        if (distance_v<3.5):
+          control = PID.run_step(speed, target)
+          self.vehicle.apply_control(control)
+          i=i+1
+          target=planned_route[i]
 
+        if self.PLOT_PID_GRAPH:
+          vel = self.vehicle.get_velocity()
+          kmp = (3.6 * math.sqrt(vel.x**2 + vel.y**2 + vel.z**2)) # kilometer per hour
+
+          print(kmp)
+
+          self.current_speed_plot.append(kmp)
+          self.target_speed_plot.append(speed)
+          ax.plot(self.current_speed_plot, color='g')
+          ax.plot(self.target_speed_plot, color='r')
+          fig.canvas.draw()
+          fig.canvas.flush_events()
+
+          iteration += 1
+          
+      control = PID.run_step(0,planned_route[len(planned_route)-1])
+      self.vehicle.apply_control(control)
+    except KeyboardInterrupt:
+      print("KeyboardInterrupt")
+      
 
   def setup_PID(self):
     """
@@ -212,6 +260,8 @@ class CarlaEnv:
       self.vehicle.destroy()
 
     self.client.apply_batch([carla.command.DestroyActor(x) for x in self.traffic_vehicles])
+
+    self.client.apply_batch([carla.command.DestroyActor(x) for x in self.sensors_actor])
 
 
   def __del__(self):
